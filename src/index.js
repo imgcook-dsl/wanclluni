@@ -1,370 +1,438 @@
-module.exports = function(schema, option) {
-  const {prettier} = option;
+module.exports = function (schema, options) {
 
-  // imports
-  const imports = [];
+  const { _, helper, prettier, responsive } = options;
+  const { printer, utils } = helper;
 
-  // inline style
-  const style = {};
+  // 渲染数据
+  const renderData = {};
 
-  // Global Public Functions
-  const utils = [];
+  // style
+  const styleMap = {};
 
-  // Classes 
-  const classes = [];
-
-  // 1vw = width / 100
-  const _w = option.responsive.width / 100;
-
-  const isExpression = (value) => {
-    return /^\{\{.*\}\}$/.test(value);
-  }
-
-  const toString = (value) => {
-    if ({}.toString.call(value) === '[object Function]') {
-      return value.toString();
-    }
-    if (typeof value === 'string') {
-      return value;
-    }
-    if (typeof value === 'object') {
-      return JSON.stringify(value, (key, value) => {
-        if (typeof value === 'function') {
-          return value.toString();
-        } else {
-          return value;
-        }
-      })
-    }
-
-    return String(value);
+  // mock data
+  const mockData = {
+    properties: {},
+    data: {}
   };
 
-  // convert to responsive unit, such as vw
-  const parseStyle = (style) => {
-    for (let key in style) {
-      switch (key) {
-        case 'fontSize':
-        case 'marginTop':
-        case 'marginBottom':
-        case 'paddingTop':
-        case 'paddingBottom':
-        case 'height':
-        case 'top':
-        case 'bottom':
-        case 'width':
-        case 'maxWidth':
-        case 'left':
-        case 'right':
-        case 'paddingRight':
-        case 'paddingLeft':
-        case 'marginLeft':
-        case 'marginRight':
-        case 'lineHeight':
-        case 'borderBottomRightRadius':
-        case 'borderBottomLeftRadius':
-        case 'borderTopRightRadius':
-        case 'borderTopLeftRadius':
-        case 'borderRadius':
-          style[key] = (parseInt(style[key]) / _w).toFixed(2) + 'vw';
-          break;
-      }
-    }
-
-    return style;
-  }
-
-  // parse function, return params and content
-  const parseFunction = (func) => {
-    const funcString = func.toString();
-    const params = funcString.match(/\([^\(\)]*\)/)[0].slice(1, -1);
-    const content = funcString.slice(funcString.indexOf('{') + 1, funcString.lastIndexOf('}'));
-    return {
-      params,
-      content
-    };
-  }
-
-  // parse layer props(static values or expression)
-  const parseProps = (value, isReactNode) => {
-    if (typeof value === 'string') {
-      if (isExpression(value)) {
-        if (isReactNode) {
-          return value.slice(1, -1);
-        } else {
-          return value.slice(2, -2);
-        }
-      }
-
-      if (isReactNode) {
-        return value;
-      } else {
-        return `'${value}'`;
-      }
-    } else if (typeof value === 'function') {
-      const {params, content} = parseFunction(value);
-      return `(${params}) => {${content}}`;
-    }
-  }
-
-  // parse async dataSource
-  const parseDataSource = (data) => {
-    const name = data.id;
-    const {uri, method, params} = data.options;
-    const action = data.type;
-    let payload = {};
-
-    switch (action) {
-      case 'fetch':
-        if (imports.indexOf(`import {fetch} from whatwg-fetch`) === -1) {
-          imports.push(`import {fetch} from 'whatwg-fetch'`);
-        }
-        payload = {
-          method: method
-        };
-
-        break;
-      case 'jsonp':
-        if (imports.indexOf(`import {fetchJsonp} from fetch-jsonp`) === -1) {
-          imports.push(`import jsonp from 'fetch-jsonp'`);
-        }
-        break;
-    }
-
-    Object.keys(data.options).forEach((key) => {
-      if (['uri', 'method', 'params'].indexOf(key) === -1) {
-        payload[key] = toString(data.options[key]);
-      }
-    });
-
-    // params parse should in string template
-    if (params) {
-      payload = `${toString(payload).slice(0, -1)} ,body: ${isExpression(params) ? parseProps(params) : toString(params)}}`;
-    } else {
-      payload = toString(payload);
-    }
-
-    let result = `{
-      ${action}(${parseProps(uri)}, ${toString(payload)})
-        .then((response) => response.json())
-    `;
-
-    if (data.dataHandler) {
-      const { params, content } = parseFunction(data.dataHandler);
-      result += `.then((${params}) => {${content}})
-        .catch((e) => {
-          console.log('error', e);
-        })
-      `
-    }
-
-    result += '}';
-
-    return `${name}() ${result}`;
-  }
-
-  // parse condition: whether render the layer
-  const parseCondition = (condition, render) => {
-    if (typeof condition === 'boolean') {
-      return `${condition} && ${render}`
-    } else if (typeof condition === 'string') {
-      return `${condition.slice(2, -2)} && ${render}`
-    }
-  }
-
-  // parse loop render
-  const parseLoop = (loop, loopArg, render) => {
-    let data;
-    let loopArgItem = (loopArg && loopArg[0]) || 'item';
-    let loopArgIndex = (loopArg && loopArg[1]) || 'index';
-
-    if (Array.isArray(loop)) {
-      data = toString(loop);
-    } else if (isExpression(loop)) {
-      data = loop.slice(2, -2);
-    }
-
-    // add loop key
-    const tagEnd = render.match(/^<.+?\s/)[0].length;
-    render = `${render.slice(0, tagEnd)} key={${loopArgIndex}}${render.slice(tagEnd)}`;
-
-    // remove `this` 
-    const re = new RegExp(`this.${loopArgItem}`, 'g')
-    render = render.replace(re, loopArgItem);
-
-    return `${data}.map((${loopArgItem}, ${loopArgIndex}) => {
-      return (${render});
-    })`;
-  }
-
-  // generate render xml
-  const generateRender = (schema) => {
-    const type = schema.componentName.toLowerCase();
-    const className = schema.props && schema.props.className;
-    const classString = className ? ` style={styles.${className}}` : '';
-
-    if (className) {
-      style[className] = parseStyle(schema.props.style);
-    }
-
-    let xml;
-    let props = '';
-
-    Object.keys(schema.props).forEach((key) => {
-      if (['className', 'style', 'text', 'src'].indexOf(key) === -1) {
-        props += ` ${key}={${parseProps(schema.props[key])}}`;
-      }
-    })
-
-    switch(type) {
-      case 'text':
-        const innerText = parseProps(schema.props.text, true);
-        xml = `<span${classString}${props}>${innerText}</span>`;
-        break;
-      case 'image':
-        const source = parseProps(schema.props.src);
-        xml = `<img${classString}${props} src={${source}} />`;
-        break;
-      case 'div':
-      case 'page':
-      case 'block':
-        if (schema.children && schema.children.length) {
-          xml = `<div${classString}${props}>${transform(schema.children)}</div>`;
-        } else {
-          xml = `<div${classString}${props} />`;
-        }
-        break;
-    }
-
-    if (schema.loop) {
-      xml = parseLoop(schema.loop, schema.loopArgs, xml)
-    }
-    if (schema.condition) {
-      xml = parseCondition(schema.condition, xml);
-    }
-    if (schema.loop || schema.condition) {
-      xml = `{${xml}}`;
-    }
-
-    return xml;
-  }
-
-  // parse schema
-  const transform = (schema) => {
-    let result = '';
-
-    if (Array.isArray(schema)) {
-      schema.forEach((layer) => {
-        result += transform(layer);
-      });
-    } else {
-      const type = schema.componentName.toLowerCase();
-
-      if (['page', 'block'].indexOf(type) !== -1) {
-        // 容器组件处理: state/method/dataSource/lifeCycle/render
-        const states = [];
-        const lifeCycles = [];
-        const methods = [];
-        const init = [];
-        const render = [`render(){ return (`];
-        let classData = [`class ${schema.componentName}_${classes.length} extends Component {`];
-
-        if (schema.state) {
-          states.push(`state = ${toString(schema.state)}`);
-        }
-
-        if (schema.methods) {
-          Object.keys(schema.methods).forEach((name) => {
-            const { params, content } = parseFunction(schema.methods[name]);
-            methods.push(`${name}(${params}) {${content}}`);
-          });
-        }
-
-        if (schema.dataSource && Array.isArray(schema.dataSource.list)) {
-          schema.dataSource.list.forEach((item) => {
-            if (typeof item.isInit === 'boolean' && item.isInit) {
-              init.push(`this.${item.id}();`)
-            } else if (typeof item.isInit === 'string') {
-              init.push(`if (${parseProps(item.isInit)}) { this.${item.id}(); }`)
-            }
-            methods.push(parseDataSource(item));
-          });
-
-          if (schema.dataSource.dataHandler) {
-            const { params, content } = parseFunction(schema.dataSource.dataHandler);
-            methods.push(`dataHandler(${params}) {${content}}`);
-            init.push(`this.dataHandler()`);
-          }
-        }
-
-        if (schema.lifeCycles) {
-          if (!schema.lifeCycles['_constructor']) {
-            lifeCycles.push(`constructor(props, context) { super(); ${init.join('\n')}}`);
-          }
-
-          Object.keys(schema.lifeCycles).forEach((name) => {
-            const { params, content } = parseFunction(schema.lifeCycles[name]);
-
-            if (name === '_constructor') {
-              lifeCycles.push(`constructor(${params}) { super(); ${content} ${init.join('\n')}}`);
-            } else {
-              lifeCycles.push(`${name}(${params}) {${content}}`);
-            }
-          });
-        }
-
-        render.push(generateRender(schema))
-        render.push(`);}`);
-
-        classData = classData.concat(states).concat(lifeCycles).concat(methods).concat(render);
-        classData.push('}');
-
-        classes.push(classData.join('\n'));
-      } else {
-        result += generateRender(schema);
-      }
-    }
-
-    return result;
+  // script
+  const scriptMap = {
+    created: '',
+    lifetimes: {},
+    methods: {},
+    data: {},
+    event: {}
   };
 
-  if (option.utils) {
-    Object.keys(option.utils).forEach((name) => {
-      utils.push(`const ${name} = ${option.utils[name]}`);
-    });
-  }
+  // 宽高
+  let modConfig = responsive || {
+    width: 750,
+    height: 1334
+  };
 
-  // start parse schema
-  transform(schema);
+  // 代码缩进
+  const line = (content, level) =>
+    utils.line(content, {
+      indent: {
+        space: level * 4
+      }
+    });
 
   const prettierOpt = {
-    parser: 'babel',
+    parser: 'vue',
+    tabWidth: 4,
     printWidth: 120,
     singleQuote: true
   };
 
-  return {
-    panelDisplay: [
-      {
-        panelName: `index.jsx`,
-        panelValue: prettier.format(`
-          'use strict';
+  const parseStyleObject = style =>
+    Object.entries(style)
+    .filter(([, value]) => value || value === 0)
+    .map(([key, value]) => {
+      key = _.kebabCase(key);
+      return `${key}: ${normalizeStyleValue(key, value, modConfig)};`;
+    });
 
-          import React, { Component } from 'react';
-          ${imports.join('\n')}
-          import styles from './style.js';
-          ${utils.join('\n')}
-          ${classes.join('\n')}
-          export default ${schema.componentName}_0;
-        `, prettierOpt),
-        panelType: 'js',
-      },
-      {
-        panelName: `style.js`,
-        panelValue: prettier.format(`export default ${toString(style)}`, prettierOpt),
-        panelType: 'js'
+  const renderStyleItem = (className, style) => [
+    line(`.${className} {`),
+    ...parseStyleObject(style).map(item => line(item, 1)),
+    line('}')
+  ];
+
+  const renderStyle = map => [].concat(
+    ...Object.entries(map).map(([className, style]) =>
+      renderStyleItem(className, style)
+    )
+  );
+
+  const normalizeTemplateAttrValue = ({
+    key,
+    value
+  }) => {
+    if (typeof value === 'string') {
+      return JSON.stringify(value);
+    } else if (key === 'style') {
+      var str = '"';
+      Object.entries(value).map(([k, val]) => {
+        k = _.kebabCase(k);
+        str += `${k}:${normalizeStyleValue(k, val, modConfig)};`
+      });
+      return `${str}"`;
+    } else {
+      return `"${JSON.stringify(value)}"`;
+    }
+  };
+
+  const renderTemplateAttr = (key, value) =>
+    `${key}=${normalizeTemplateAttrValue({key, value})}`;
+
+  let depth = 0;
+  let {
+    dataSource,
+    methods,
+    lifeCycles,
+    state
+  } = schema;
+
+  const renderTemplate = (obj, level = 0) => {
+    depth = depth + 1;
+
+    // handle node changetype
+    const targetName = obj.componentName.toLowerCase();
+    obj.element = COMPONENT_TYPE_MAP[targetName] || targetName;
+
+    if (!obj.props) obj.props = {};
+
+    // loop handler
+    if (obj.loop) {
+      if (typeof obj.loop === 'string') {
+        obj.props[WXS_SYNTAX_MAP['for']] = `{{${obj.loop.split('.').pop()}`;
+      } else {
+        obj.props[WXS_SYNTAX_MAP['for']] = `{{${JSON.stringify(obj.loop)}}}`
       }
+      obj.props[WXS_SYNTAX_MAP['forItem']] = obj.loopArgs && `${obj.loopArgs[0]}` || 'item';
+      obj.props[WXS_SYNTAX_MAP['forIndex']] = obj.loopArgs && `${obj.loopArgs[1]}` || 'index';
+    }
+
+    const handlerFuncStr = options => {
+      let {
+        value,
+        item
+      } = options;
+      if (value.content && item) {
+        value.content = value.content.replace(
+          new RegExp('this.' + item + '.', 'g'),
+          'e.currentTarget.dataset.'
+        );
+      }
+      return value;
+    };
+
+    // condition handler
+    if (obj.condition) {
+      obj.props[WXS_SYNTAX_MAP['condition']] = `${obj.condition}`;
+    }
+
+    // event handler
+    for (let [key, value] of Object.entries(obj.props)) {
+      if (COMPONENT_EVENT_MAP[key]) {
+        obj.props[COMPONENT_EVENT_MAP[key]] = key;
+        scriptMap.methods[key] = handlerFuncStr({
+          value: parseFunction(value),
+          item: obj.props[WXS_SYNTAX_MAP['forItem']]
+        });
+      }
+      if (typeof value === 'string' && value.match(/this\./)) {
+        obj.props[key] = value.replace(/this\./g, '');
+      }
+    }
+
+    switch (obj.element) {
+      case 'view':
+        obj.element = 'view';
+        break;
+      case 'picture':
+        obj.element = 'image';
+        obj.children = null;
+        break;
+      case 'text':
+        obj.children = obj.props.text;
+        break;
+    }
+
+    if (obj.props.className) {
+      obj.props.class = _.kebabCase(obj.props.className);
+      delete obj.props.className;
+      styleMap[obj.props.class] = {
+        ...styleMap[obj.props.class],
+        ...obj.props.style
+      };
+    }
+    if (obj.props.source && obj.props.src) {
+      obj.props.src = obj.props.source;
+      delete obj.props.source;
+    }
+
+    let ret = [];
+    let nextLine = '';
+
+    const props = Object.entries(obj.props).filter(([key, value]) => {
+      if (key === 'style' && obj.props && !obj.props.class) {
+        return true;
+      }
+      return ['style', 'text', 'onClick'].indexOf(key) < 0;
+    });
+
+    if (props.length > 3) {
+      ret.push(line(`<${obj.element}`, level));
+      ret = ret.concat(
+        props.map(([key, value]) => {
+          return line(renderTemplateAttr(key, value), level + 1);
+        })
+      );
+    } else {
+      nextLine = `<${obj.element}`;
+      if (props.length) {
+        nextLine += ` ${props
+          .map(([key, value]) => {
+            return renderTemplateAttr(key, value);
+          })
+          .join(' ')}`;
+      }
+    }
+
+    if (obj.children) {
+      if (Array.isArray(obj.children) && obj.children.length) {
+        // Multi-line Child
+        ret.push(line(`${nextLine}>`, level));
+        ret = ret.concat(
+          ...obj.children.map(o => {
+            return renderTemplate(o, level + 1);
+          })
+        );
+        ret.push(line(`</${obj.element}>`, level));
+      } else {
+        // Single line Child
+        ret.push(line(`${nextLine}>${obj.children}</${obj.element}>`, level));
+      }
+    } else {
+      // Self-closing label
+      ret.push(line(`${nextLine} />`, level));
+    }
+    return ret;
+  };
+
+  // methods handler
+  methods &&
+    Object.entries(methods).map(([key, value]) => {
+      scriptMap.methods[key] = parseFunction(value);
+    });
+
+  // lifeCycles handler
+  lifeCycles &&
+    Object.entries(lifeCycles).map(([key, value]) => {
+      scriptMap[COMPONENT_LIFETIMES_MAP[key]] = parseFunction(value);
+    });
+
+  state &&
+    Object.entries(state).map(([key, value]) => {
+      if (value instanceof Array) {
+        scriptMap.data[key] = '[]';
+      } else {
+        scriptMap.data[key] = JSON.stringify(value);
+      }
+    });
+
+  const renderScript = scriptMap => {
+    const {
+      attached,
+      detached,
+      methods,
+      created,
+      data
+    } = scriptMap;
+    const properties = [];
+
+    return `
+	import { mapState } from 'vuex';
+    export default {
+      data() {
+        return {}
+      },
+      onLoad() {
+        console.log('页面加载完成')
+      },
+	  onPullDownRefresh() {
+		  
+	  },
+	  setup() {
+		  init() {
+			  
+		  },
+	  },
+      methods: {},
+	  computed: {},
+    }`;
+  };
+
+  const generatorVueTemplate = template => {
+    template.unshift(line('<template>'));
+    return template.concat(line(`</template>
+
+<script>
+  import index from "./index.js";
+  export default index;
+</script>
+    
+<style lang="scss" scoped>
+  @import './index.scss';
+</style>`))
+  };
+
+  renderData.wxml = printer(renderTemplate(schema, 1));
+  renderData.wxss = printer(renderStyle(styleMap));
+  renderData.js = prettier.format(renderScript(scriptMap), {
+    parser: 'babel'
+  });
+
+  renderData.mockData = `var mock = ${JSON.stringify(mockData)}`;
+  renderData.json = printer([
+    line('{'),
+    line('"component": true,', 1),
+    line('"usingComponents": {}', 1),
+    line('}')
+  ]);
+
+  return {
+    renderData,
+    prettierOpt: {},
+    panelDisplay: [{
+        panelName: 'index.vue',
+        panelValue: prettier.format(`
+        <template>
+          ${renderData.wxml}
+        </template>
+
+        <script>
+          import index from "./index.js";
+          export default index;
+        </script>
+
+        <style lang="scss" scoped>
+          @import './index.scss';
+        </style>
+        `, prettierOpt),
+        panelType: 'vue'
+      },
+	  {
+		  panelName: 'index.js',
+		  panelValue: prettier.format(`
+			 ${renderData.js}
+		  `, prettierOpt),
+		  panelType: 'js'
+	  },
+      {
+        panelName: 'index.scss',
+        panelValue: renderData.wxss,
+        panelType: 'BuilderRaxStyle',
+        mode: 'css'
+      },
     ],
+    playground: {
+      info: 'uniapp 官网',
+      link: 'https://uniapp.dcloud.io/'
+    },
     noTemplate: true
   };
-}
+};
+
+const COMPONENT_TYPE_MAP = {
+  page: 'view',
+  div: 'view',
+  block: 'view',
+  link: 'view',
+  video: 'video',
+  expview: 'view',
+  scroller: 'scroll-view',
+  slider: 'swiper',
+  view: 'view',
+  text: 'text',
+  picture: 'image',
+  image: 'image',
+};
+
+const COMPONENT_LIFETIMES_MAP = {
+  _constructor: 'created',
+  render: '',
+  componentDidMount: 'attached',
+  componentDidUpdate: '',
+  componentWillUnmount: 'detached'
+};
+
+const COMPONENT_EVENT_MAP = {
+  onClick: 'bindtap',
+};
+
+const WXS_SYNTAX_MAP = {
+  for: 'wx:for',
+  forItem: 'wx:for-item',
+  forIndex: 'wx:for-index',
+  condition: 'wx:if'
+};
+
+// parse function, return params and content
+const parseFunction = func => {
+  const funcString = func.toString();
+  const params = funcString.match(/\([^\(\)]*\)/)[0].slice(1, -1);
+  const content = funcString.slice(
+    funcString.indexOf('{') + 1,
+    funcString.lastIndexOf('}')
+  );
+  return {
+    params,
+    content
+  };
+};
+
+const normalizeStyleValue = (key, value, config) => {
+  switch (key) {
+    case 'font-size':
+    case 'margin-left':
+    case 'margin-top':
+    case 'margin-right':
+    case 'margin-bottom':
+    case 'padding-left':
+    case 'padding-top':
+    case 'padding-right':
+    case 'padding-bottom':
+    case 'max-width':
+    case 'width':
+    case 'height':
+    case 'border-width':
+    case 'border-radius':
+    case 'top':
+    case 'left':
+    case 'right':
+    case 'bottom':
+    case 'line-height':
+    case 'letter-spacing':
+    case 'border-top-right-radius':
+    case 'border-top-left-radius':
+    case 'border-bottom-left-radius':
+    case 'border-bottom-right-radius':
+      value = '' + value;
+      value = value.replace(/(rem)|(px)/, '');
+      value = (Number(value) * 750) / config.width;
+      value = '' + value;
+
+      if (value.length > 3 && value.substr(-3, 3) == 'rem') {
+        value = value.slice(0, -3) + 'rpx';
+      } else {
+        value += 'rpx';
+      }
+      break;
+    default:
+      break;
+  }
+  return value;
+};
