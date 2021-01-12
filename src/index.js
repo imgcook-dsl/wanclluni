@@ -1,10 +1,13 @@
-module.exports = function (schema, options) {
+
+module.exports = function(schema, options) {
 
   const { _, helper, prettier, responsive } = options;
   const { printer, utils } = helper;
-
+    
   // 渲染数据
   const renderData = {};
+  
+
 
   // style
   const styleMap = {};
@@ -30,28 +33,26 @@ module.exports = function (schema, options) {
     height: 1334
   };
 
-  // 代码缩进
+   // 代码缩进
   const line = (content, level) =>
-    utils.line(content, {
-      indent: {
-        space: level * 4
-      }
-    });
-
+    utils.line(content, { indent: { space: level * 2 } });
+  
+  //vue页面
   const prettierOpt = {
     parser: 'vue',
     tabWidth: 4,
     printWidth: 120,
     singleQuote: true
   };
-
+  
+  
   const parseStyleObject = style =>
     Object.entries(style)
-    .filter(([, value]) => value || value === 0)
-    .map(([key, value]) => {
-      key = _.kebabCase(key);
-      return `${key}: ${normalizeStyleValue(key, value, modConfig)};`;
-    });
+      .filter(([, value]) => value || value === 0)
+      .map(([key, value]) => {
+        key = _.kebabCase(key);
+        return `${key}: ${normalizeStyleValue(key, value, modConfig)};`;
+      });
 
   const renderStyleItem = (className, style) => [
     line(`.${className} {`),
@@ -59,23 +60,21 @@ module.exports = function (schema, options) {
     line('}')
   ];
 
-  const renderStyle = map => [].concat(
-    ...Object.entries(map).map(([className, style]) =>
-      renderStyleItem(className, style)
-    )
-  );
+  const renderStyle = map =>
+    [].concat(
+      ...Object.entries(map).map(([className, style]) =>
+        renderStyleItem(className, style)
+      )
+    );
 
-  const normalizeTemplateAttrValue = ({
-    key,
-    value
-  }) => {
+  const normalizeTemplateAttrValue = ({key, value}) => {
     if (typeof value === 'string') {
       return JSON.stringify(value);
     } else if (key === 'style') {
       var str = '"';
       Object.entries(value).map(([k, val]) => {
         k = _.kebabCase(k);
-        str += `${k}:${normalizeStyleValue(k, val, modConfig)};`
+        str +=`${k}:${normalizeStyleValue(k, val, modConfig)};`
       });
       return `${str}"`;
     } else {
@@ -87,12 +86,7 @@ module.exports = function (schema, options) {
     `${key}=${normalizeTemplateAttrValue({key, value})}`;
 
   let depth = 0;
-  let {
-    dataSource,
-    methods,
-    lifeCycles,
-    state
-  } = schema;
+  let { dataSource, methods, lifeCycles, state } = schema;
 
   const renderTemplate = (obj, level = 0) => {
     depth = depth + 1;
@@ -115,10 +109,7 @@ module.exports = function (schema, options) {
     }
 
     const handlerFuncStr = options => {
-      let {
-        value,
-        item
-      } = options;
+      let { value, item } = options;
       if (value.content && item) {
         value.content = value.content.replace(
           new RegExp('this.' + item + '.', 'g'),
@@ -234,6 +225,11 @@ module.exports = function (schema, options) {
       scriptMap[COMPONENT_LIFETIMES_MAP[key]] = parseFunction(value);
     });
 
+  // dataSource &&
+  //   Object.entries(dataSource).map(([key, value]) => {
+  //     // console.log(key);
+  //   });
+
   state &&
     Object.entries(state).map(([key, value]) => {
       if (value instanceof Array) {
@@ -244,73 +240,50 @@ module.exports = function (schema, options) {
     });
 
   const renderScript = scriptMap => {
-    const {
-      attached,
-      detached,
-      methods,
-      created,
-      data
-    } = scriptMap;
+    const { attached, detached, methods, created, data } = scriptMap;
     const properties = [];
 
     return `
-	import { mapState } from 'vuex';
-    export default {
-      data() {
-        return {}
-      },
-      onLoad() {
-        console.log('页面加载完成')
-      },
-	  onPullDownRefresh() {
-		  
-	  },
-	  setup() {
-		  init() {
+        import { mapState } from 'vuex';
+		export default {
+		  data() {
+			return {}
+		  },
+		  onLoad() {
+			console.log('页面加载完成')
+		  },
+		  onPullDownRefresh() {
 			  
 		  },
-	  },
-      methods: {},
-	  computed: {},
-    }`;
+		  setup() {
+			 
+		  },
+		  methods: {
+			  init() {},
+		  },
+		  computed: {},
+		}
+    `;
   };
 
-  const generatorVueTemplate = template => {
-    template.unshift(line('<template>'));
-    return template.concat(line(`</template>
-
-<script>
-  import index from "./index.js";
-  export default index;
-</script>
-    
-<style lang="scss" scoped>
-  @import './index.scss';
-</style>`))
-  };
-
-  renderData.wxml = printer(renderTemplate(schema, 1));
-  renderData.wxss = printer(renderStyle(styleMap));
+  renderData.vue = printer(renderTemplate(schema));
+  renderData.scss = printer(renderStyle(styleMap));
   renderData.js = prettier.format(renderScript(scriptMap), {
     parser: 'babel'
   });
 
   renderData.mockData = `var mock = ${JSON.stringify(mockData)}`;
-  renderData.json = printer([
-    line('{'),
-    line('"component": true,', 1),
-    line('"usingComponents": {}', 1),
-    line('}')
-  ]);
+
 
   return {
     renderData,
     prettierOpt: {},
-    panelDisplay: [{
+    panelDisplay: [
+      {
         panelName: 'index.vue',
         panelValue: prettier.format(`
         <template>
-          ${renderData.wxml}
+          ${renderData.vue}
         </template>
 
         <script>
@@ -322,21 +295,21 @@ module.exports = function (schema, options) {
           @import './index.scss';
         </style>
         `, prettierOpt),
-        panelType: 'vue'
+        panelType: 'BuilderRaxView',
+        mode: 'vue'
       },
-	  {
-		  panelName: 'index.js',
-		  panelValue: prettier.format(`
-			 ${renderData.js}
-		  `, prettierOpt),
-		  panelType: 'js'
-	  },
       {
         panelName: 'index.scss',
-        panelValue: renderData.wxss,
+        panelValue: renderData.scss,
         panelType: 'BuilderRaxStyle',
-        mode: 'css'
+        mode: 'scss'
       },
+      {
+        panelName: 'index.js',
+        panelValue: renderData.js,
+        panelType: 'BuilderRaxView',
+        mode: 'javascript'
+      }
     ],
     playground: {
       info: 'uniapp 官网',
@@ -357,8 +330,7 @@ const COMPONENT_TYPE_MAP = {
   slider: 'swiper',
   view: 'view',
   text: 'text',
-  picture: 'image',
-  image: 'image',
+  picture: 'image'
 };
 
 const COMPONENT_LIFETIMES_MAP = {
