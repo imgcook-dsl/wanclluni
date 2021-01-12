@@ -34,17 +34,10 @@
 </template>
 
 <script>
-export default {
-    data() {
-        return {};
-    },
-    onLoad() {
-        console.log('页面加载完成');
-    },
-    methods: {}
-};
+  import index from "./index.js";
+  export default index;
 </script>
 
 <style lang="scss" scoped>
-@import './component.scss';
+@import './index.scss';
 </style>
