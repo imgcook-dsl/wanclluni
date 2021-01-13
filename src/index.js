@@ -249,10 +249,13 @@ module.exports = function(schema, options) {
 		  data() {
 			return {}
 		  },
-		  onLoad() {
+		  onLoad(option) {
 			console.log('页面加载完成')
 		  },
 		  onPullDownRefresh() {
+			  
+		  },
+		  onReachBottom(){
 			  
 		  },
 		  setup() {
