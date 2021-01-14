@@ -333,7 +333,8 @@ const COMPONENT_TYPE_MAP = {
   slider: 'swiper',
   view: 'view',
   text: 'text',
-  picture: 'image'
+  picture: 'image',
+  image: 'image',
 };
 
 const COMPONENT_LIFETIMES_MAP = {
